@@ -173,6 +173,9 @@ class EntityOverseer(Overseer):
 class WriteOverseer(Overseer):
     def setOptions(self, options={}):
         self.options = options
+        if not options['query']:
+            raise IOError('Must specify a query queue file.')
+        self.queries = [line.strip() for line in open(options['query'])]
         credentials = {}
         if os.path.exists(options['credentials']):
             credentials = json.loads(open(options['credentials']).read())
@@ -180,8 +183,22 @@ class WriteOverseer(Overseer):
         self.secret = credentials.get('secret')
         self.local = options['local'] # write to AWS if 0, local if 1
 
-    def getIterator(self):
-        pass #TODO: return open(queryqueue).readlines()
+    def getIterator(self, query):
+        yield QueryIterator('http://search-s11.prod.wikia.net:8983/solr/main/select', {'query': query, 'fields': 'id,html_en,indexed', 'sort': 'id asc'})
+
+    def oversee(self):
+        for query in self.queries:
+            iterator = self.getIterator(query)
+            while True:
+                options = {}
+                try:
+                    for group in iterator:
+                        while len(self.processes.keys()) == int(self.options['workers']):
+                            time.sleep(1)
+                            self.check_processes()
+                        self.add_process(group)
+                except StopIteration:
+                    break
 
 """
 Oversees the administration of backlink processes
