@@ -173,9 +173,10 @@ class EntityOverseer(Overseer):
 class WriteOverseer(Overseer):
     def setOptions(self, options={}):
         self.options = options
-        if not options['query']:
-            raise IOError('Must specify a query queue file.')
-        self.queries = [line.strip() for line in open(options['query'])]
+        #if not options['query']:
+        #    raise IOError('Must specify a query queue file.')
+        #self.queries = [line.strip() for line in open(options['query'])]
+        self.qqdir = options['qqdir']
         credentials = {}
         if os.path.exists(options['credentials']):
             credentials = json.loads(open(options['credentials']).read())
@@ -184,21 +185,26 @@ class WriteOverseer(Overseer):
         self.local = options['local'] # write to AWS if 0, local if 1
 
     def getIterator(self, query):
-        yield QueryIterator('http://search-s11.prod.wikia.net:8983/solr/main/select', {'query': query, 'fields': 'id,html_en,indexed', 'sort': 'id asc'})
+        #return QueryIterator('http://search-s11.prod.wikia.net:8983/solr/main/select', {'query': query, 'fields': 'id,html_en,indexed', 'sort': 'id asc'})
+        return [os.path.join(self.qqdir, qqfile) for qqfile in os.listdir(self.qqdir)]
+
+    # TODO
+    def add_process(self, doc):
+        wid = doc["id"]
+        print "Starting process for wid %s" % wid
+        command = 'python %s %s %s %s' % (os.path.join(os.getcwd(), 'nlp-harvester.py'), str(wid), str(self.options['language']), str(self.options['last_indexed']))
+        process = Popen(command, shell=True)
+        self.processes[wid] = process
+        self.timings[wid] = datetime.now()
 
     def oversee(self):
         for query in self.queries:
             iterator = self.getIterator(query)
-            while True:
-                options = {}
-                try:
-                    for group in iterator:
-                        while len(self.processes.keys()) == int(self.options['workers']):
-                            time.sleep(1)
-                            self.check_processes()
-                        self.add_process(group)
-                except StopIteration:
-                    break
+            for doc in iterator:
+                while len(self.processes.keys()) == int(self.options['workers']):
+                    time.sleep(1)
+                    self.check_processes()
+                self.add_process(doc)
 
 """
 Oversees the administration of backlink processes
