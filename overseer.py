@@ -5,7 +5,7 @@ from corenlp.corenlp import *
 from nlp_rest_client import SolrWikiService
 from subprocess import Popen, PIPE
 from datetime import datetime
-import json, requests, os, time
+import json, requests, os, time, shutil
 """
 Responsible for threading workers over grouped queries
 """
@@ -106,6 +106,7 @@ class NLPOverseer(Overseer):
 
 class EntityOverseer(Overseer):
     def __init__(self, options={}, skip=None):
+        #TODO: why doesn't the super() call need a config parameter?
         super(EntityOverseer, self).__init__(options)
         self.setOptions(options)
         self.skip = {}
@@ -171,40 +172,58 @@ class EntityOverseer(Overseer):
                  del self.processes[pkey], self.timings[pkey]
 
 class WriteOverseer(Overseer):
+    def __init__(self, options = {}):
+        self.setOptions(options)
+        self.options = options
+        self.processes = {}
+        self.timings = {}
+
     def setOptions(self, options={}):
         self.options = options
-        #if not options['query']:
-        #    raise IOError('Must specify a query queue file.')
-        #self.queries = [line.strip() for line in open(options['query'])]
         self.qqdir = options['qqdir']
+        self.processing = options['processing']
+        if not os.path.exists(self.processing):
+            os.makedirs(self.processing)
         credentials = {}
         if os.path.exists(options['credentials']):
             credentials = json.loads(open(options['credentials']).read())
         self.key = credentials.get('key')
         self.secret = credentials.get('secret')
-        self.local = options['local'] # write to AWS if 0, local if 1
+        self.local = str(options['local']) # write to AWS if 0, local if 1
 
-    def getIterator(self, query):
-        #return QueryIterator('http://search-s11.prod.wikia.net:8983/solr/main/select', {'query': query, 'fields': 'id,html_en,indexed', 'sort': 'id asc'})
+    def getIterator(self):
         return [os.path.join(self.qqdir, qqfile) for qqfile in os.listdir(self.qqdir)]
 
-    # TODO
-    def add_process(self, doc):
-        wid = doc["id"]
-        print "Starting process for wid %s" % wid
-        command = 'python %s %s %s %s' % (os.path.join(os.getcwd(), 'nlp-harvester.py'), str(wid), str(self.options['language']), str(self.options['last_indexed']))
+    def add_process(self, qqfile):
+        print "Starting process for query queue %s..." % qqfile
+        qqid = os.path.basename(qqfile)
+        qqdest = os.path.join(self.processing, qqid)
+        shutil.move(qqfile, qqdest)
+        command = 'python %s %s %s' % (os.path.join(os.getcwd(), 'write-harvester.py'), qqdest, self.local)
         process = Popen(command, shell=True)
-        self.processes[wid] = process
-        self.timings[wid] = datetime.now()
+        self.processes[qqdest] = process
+        self.timings[qqdest] = datetime.now()
+
+    def check_processes(self):
+         for pkey in self.processes.keys():
+             if self.processes[pkey].poll() is not None:
+                 if self.options.get('verbose', False):
+                     print "Finished wid %s in %d seconds with return status %s" % (pkey, (datetime.now() - self.timings[pkey]).seconds, self.processes[pkey].returncode)
+                 # delete query queue file when complete
+                 #os.remove(pkey) #TODO: uncomment in production
+                 del self.processes[pkey], self.timings[pkey]
 
     def oversee(self):
-        for query in self.queries:
-            iterator = self.getIterator(query)
-            for doc in iterator:
+        iterator = self.getIterator()
+        # stop while loop when there are no more qqfiles in the qqdir
+        while iterator:
+            for qqfile in iterator:
                 while len(self.processes.keys()) == int(self.options['workers']):
                     time.sleep(1)
                     self.check_processes()
-                self.add_process(doc)
+                self.add_process(qqfile)
+            iterator = self.getIterator()
+        print 'OVERSEER HALTED; OUT OF QUERY QUEUE FILES'
 
 """
 Oversees the administration of backlink processes
