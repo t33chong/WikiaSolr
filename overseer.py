@@ -184,12 +184,7 @@ class WriteOverseer(Overseer):
         self.processing = options['processing']
         if not os.path.exists(self.processing):
             os.makedirs(self.processing)
-        credentials = {}
-        if os.path.exists(options['credentials']):
-            credentials = json.loads(open(options['credentials']).read())
-        self.key = credentials.get('key')
-        self.secret = credentials.get('secret')
-        self.local = str(options['local']) # write to AWS if 0, local if 1
+        self.aws = str(options['aws']) # write to AWS if 1, local if 0
 
     def getIterator(self):
         return [os.path.join(self.qqdir, qqfile) for qqfile in os.listdir(self.qqdir)]
@@ -199,7 +194,7 @@ class WriteOverseer(Overseer):
         qqid = os.path.basename(qqfile)
         qqdest = os.path.join(self.processing, qqid)
         shutil.move(qqfile, qqdest)
-        command = 'python %s %s %s' % (os.path.join(os.getcwd(), 'write-harvester.py'), qqdest, self.local)
+        command = 'python %s %s %s' % (os.path.join(os.getcwd(), 'write-harvester.py'), qqdest, self.aws)
         process = Popen(command, shell=True)
         self.processes[qqdest] = process
         self.timings[qqdest] = datetime.now()
@@ -210,7 +205,7 @@ class WriteOverseer(Overseer):
                  if self.options.get('verbose', False):
                      print "Finished wid %s in %d seconds with return status %s" % (pkey, (datetime.now() - self.timings[pkey]).seconds, self.processes[pkey].returncode)
                  # delete query queue file when complete
-                 #os.remove(pkey) #TODO: uncomment in production
+                 os.remove(pkey)
                  del self.processes[pkey], self.timings[pkey]
 
     def oversee(self):
