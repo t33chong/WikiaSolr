@@ -105,17 +105,18 @@ class NLPOverseer(Overseer):
                 self.add_process(group)
 
 class EntityOverseer(Overseer):
-    def __init__(self, options={}, skip=None):
-        #TODO: why doesn't the super() call need a config parameter?
-        super(EntityOverseer, self).__init__(options)
+    def __init__(self, options={}):
         self.setOptions(options)
-        self.skip = {}
-        if options['skip']:
-            self.skip = dict((int(wid), True) for wid in open(options['skip']))
+        self.processes = {}
+        self.timings = {}
 
     def setOptions(self, options={}):
         self.options = options
         csv = options.get('csv_file', '/data/wikis_to_entities.csv')
+        print 'building dictionary...'
+        with open(csv) as c:
+            self.done = dict((line.split(',')[0], True) for line in c.readlines())
+        print self.done
         self.csv = open(csv, 'w') if not os.path.exists(csv) else open(csv, 'a')
         self.xml_dir = options.get('xml_dir', '/data/xml')
 
@@ -147,21 +148,16 @@ class EntityOverseer(Overseer):
             self.timings[wid] = datetime.now()
 
     def oversee(self):
-        try:
-            while True:
-                options = {}
-                iterator = self.getIterator()
-                for wid in iterator:
-                    if self.skip.get(wid, False):
-                        print 'wid %i already complete, skipping...' % wid
-                        continue
-                    while len(self.processes.keys()) == int(self.options['workers']):
-                        time.sleep(5)
-                        self.check_processes()
-                    self.add_process(wid)
-        # make sure file is closed when manually stopping the overseer
-        except KeyboardInterrupt:
-            self.csv.close()
+        iterator = self.getIterator()
+        for wid in iterator:
+            if self.done.get(SolrWikiService().get(wid)[wid]['url'], False):
+                print 'wid %i already complete, skipping...' % wid
+                continue
+            while len(self.processes.keys()) == int(self.options['workers']):
+                time.sleep(5)
+                self.check_processes()
+            self.add_process(wid)
+        self.csv.close()
 
     def check_processes(self):
          for pkey in self.processes.keys():
@@ -211,13 +207,12 @@ class WriteOverseer(Overseer):
     def oversee(self):
         while True:
             iterator = self.getIterator()
-            # stop while loop when there are no more qqfiles in the qqdir
             while iterator:
                 for qqfile in iterator:
                     while len(self.processes.keys()) == int(self.options['workers']):
                         time.sleep(1)
                         self.check_processes()
-                        self.add_process(qqfile)
+                    self.add_process(qqfile)
                 iterator = self.getIterator()
             print "No Files in Queue, Waiting 60 seconds"
             time.sleep(60)
