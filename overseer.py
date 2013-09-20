@@ -209,16 +209,18 @@ class WriteOverseer(Overseer):
                  del self.processes[pkey], self.timings[pkey]
 
     def oversee(self):
-        iterator = self.getIterator()
-        # stop while loop when there are no more qqfiles in the qqdir
-        while iterator:
-            for qqfile in iterator:
-                while len(self.processes.keys()) == int(self.options['workers']):
-                    time.sleep(1)
-                    self.check_processes()
-                self.add_process(qqfile)
+        while True:
             iterator = self.getIterator()
-        print 'OVERSEER HALTED; OUT OF QUERY QUEUE FILES'
+            # stop while loop when there are no more qqfiles in the qqdir
+            while iterator:
+                for qqfile in iterator:
+                    while len(self.processes.keys()) == int(self.options['workers']):
+                        time.sleep(1)
+                        self.check_processes()
+                        self.add_process(qqfile)
+                iterator = self.getIterator()
+            print "No Files in Queue, Waiting 60 seconds"
+            time.sleep(60)
 
 """
 Oversees the administration of backlink processes
