@@ -217,6 +217,61 @@ class WriteOverseer(Overseer):
             print "No Files in Queue, Waiting 60 seconds"
             time.sleep(60)
 
+class DataOverseer(Overseer):
+    """
+    Polls for new files in the S3 bucket 'nlp-data/data_events' and calls data-harvester on each file.
+    """
+    def __init__(self, options = {}):
+        self.setOptions(options)
+        self.options = options
+        self.processes = {}
+        self.timings = {}
+
+    def setOptions(self, options={}):
+        from boto.s3.connection import S3Connection
+        from boto.s3.key import Key
+
+        self.options = options
+        self.services = options['services']
+        self.credentials = options['credentials']
+        key = json.loads(open(self.credentials).read())['key']
+        secret = json.loads(open(self.credentials).read())['secret']
+        self.bucket = S3Connection(key, secret).get_bucket('nlp-data')
+
+    def getIterator(self):
+        return [eventfile.name for eventfile in self.bucket.get_all_keys(prefix='data_events/')]
+
+    def add_process(self, eventfile):
+        print "Starting process for event file %s..." % eventfile
+        command = 'python %s %s %s %s' % (os.path.join(os.getcwd(), 'data-harvester.py'), eventfile, self.services, self.credentials)
+        process = Popen(command, shell=True)
+        self.processes[eventfile] = process
+        self.timings[eventfile] = datetime.now()
+
+    def check_processes(self):
+         for pkey in self.processes.keys():
+             if self.processes[pkey].poll() is not None:
+                 if self.options.get('verbose', False):
+                     print "Finished wid %s in %d seconds with return status %s" % (pkey, (datetime.now() - self.timings[pkey]).seconds, self.processes[pkey].returncode)
+                 ## delete event file when complete - uncomment this eventually
+                 #k = Key(bucket)
+                 #k.key = pkey
+                 #k.delete()
+                 del self.processes[pkey], self.timings[pkey]
+
+    def oversee(self):
+        while True:
+            iterator = self.getIterator()
+            while iterator:
+                for eventfile in iterator:
+                    while len(self.processes.keys()) == int(self.options['workers']):
+                        time.sleep(1)
+                        self.check_processes()
+                    self.add_process(eventfile)
+                iterator = self.getIterator()
+            print "No Files in Queue, Waiting 60 seconds"
+            time.sleep(60)
+
 """
 Oversees the administration of backlink processes
 """
